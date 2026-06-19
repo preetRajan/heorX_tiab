@@ -286,17 +286,16 @@ if not st.session_state.df_screening.empty:
                     progress_bar = st.progress(0, text="Scoring abstracts...")
                     
                     scores = []
-                    for idx, row in df.iterrows():
+                    for i, (idx, row) in enumerate(df.iterrows()):
                         scores.append(calculate_score(f"{row.get('Title','')} {row.get('Abstract','')}", 
                                                       st.session_state.inclusion_keywords, 
                                                       st.session_state.exclusion_keywords))
-                        progress_bar.progress((idx + 1) / total, text=f"Scoring abstract {idx+1} of {total}...")
+                        progress_bar.progress((i + 1) / total, text=f"Scoring abstract {i+1} of {total}...")
                     
                     df['Score'] = scores
                     progress_bar.empty()
                     st.session_state.df_screening = sort_dataframe(df)
                 st.success("Scoring and sorting completed successfully!")
-                st.rerun()
 
         with col_btn2:
             if st.button("Execute AI Screening", help="Runs deep LLM analysis using 12 strict PICOST categories."):
@@ -341,7 +340,6 @@ if not st.session_state.df_screening.empty:
                     progress_bar.empty()
                     st.session_state.df_screening = sort_dataframe(df)
                 st.success("AI Screening analysis completed successfully!")
-                st.rerun()
 
     # --- TAB 3: Review & Sync ---
     with tab_review:
