@@ -219,17 +219,21 @@ if not st.session_state.df_screening.empty:
                 height=150)
                 
         if st.button("Generate Keywords", help="Automatically extracts semantic single/double word keywords from criteria using LLM."):
-            with st.spinner("Generating keywords..."):
+            with st.spinner("Analyzing criteria & generating keywords..."):
                 prompt = f"""
                 Analyze the criteria and extract distinct, high-value keywords.
-                CRITICAL RULES: 
-                1. Output ONLY single words or 2-word phrases maximum.
-                2. Do NOT output long phrases or full sentences.
                 
+                CRITICAL INSTRUCTIONS FOR KEYWORD INTELLIGENCE:
+                1. Output ONLY single words or 2-word phrases maximum. No sentences.
+                2. Think deeply about MUTUALLY EXCLUSIVE terms to prevent false positives:
+                   - If Inclusion requires 'Adults', Exclusion MUST automatically include 'Children', 'Adolescents', 'Pediatrics'.
+                   - If Inclusion requires a specific disease (e.g. 'Parkinson'), Exclusion should automatically include closely related distinct diseases (e.g. 'Alzheimer', 'Huntington').
+                   - If Inclusion requires 'RCT' (Randomized Controlled Trial), Exclusion should include 'Review', 'Case study', 'Observational'.
+                   
                 Inclusion Criteria: {incl_criteria}
                 Exclusion Criteria: {excl_criteria}
                 
-                Return JSON format: {{"inclusion_keywords": [], "exclusion_keywords": []}}
+                Return strictly JSON format: {{"inclusion_keywords": [], "exclusion_keywords": []}}
                 """
                 response = get_llm_response(prompt)
                 if response:
@@ -237,6 +241,7 @@ if not st.session_state.df_screening.empty:
                         res_json = json.loads(response)
                         st.session_state.inclusion_keywords = res_json.get("inclusion_keywords", [])
                         st.session_state.exclusion_keywords = res_json.get("exclusion_keywords", [])
+                        st.success("Keywords generated successfully!")
                     except json.JSONDecodeError:
                         st.error("Data parse failure from LLM.")
                         
@@ -274,64 +279,68 @@ if not st.session_state.df_screening.empty:
     with tab_engine:
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            if st.button("Calculate Scores", help="Executes token-set fuzzy matching against keywords to apply positive/negative integers."):
-                df = st.session_state.df_screening
-                total = len(df)
-                progress_bar = st.progress(0, text="Scoring abstracts...")
-                
-                scores = []
-                for idx, row in df.iterrows():
-                    scores.append(calculate_score(f"{row.get('Title','')} {row.get('Abstract','')}", 
-                                                  st.session_state.inclusion_keywords, 
-                                                  st.session_state.exclusion_keywords))
-                    progress_bar.progress((idx + 1) / total, text=f"Scoring abstract {idx+1} of {total}...")
-                
-                df['Score'] = scores
-                progress_bar.empty()
-                st.session_state.df_screening = sort_dataframe(df)
+            if st.button("Calculate Scores", help="Executes semantic matching against keywords to apply positive/negative integers."):
+                with st.spinner("Executing Mathematical Scoring..."):
+                    df = st.session_state.df_screening
+                    total = len(df)
+                    progress_bar = st.progress(0, text="Scoring abstracts...")
+                    
+                    scores = []
+                    for idx, row in df.iterrows():
+                        scores.append(calculate_score(f"{row.get('Title','')} {row.get('Abstract','')}", 
+                                                      st.session_state.inclusion_keywords, 
+                                                      st.session_state.exclusion_keywords))
+                        progress_bar.progress((idx + 1) / total, text=f"Scoring abstract {idx+1} of {total}...")
+                    
+                    df['Score'] = scores
+                    progress_bar.empty()
+                    st.session_state.df_screening = sort_dataframe(df)
+                st.success("Scoring and sorting completed successfully!")
                 st.rerun()
 
         with col_btn2:
             if st.button("Execute AI Screening", help="Runs deep LLM analysis using 12 strict PICOST categories."):
-                df = st.session_state.df_screening
-                total = len(df)
-                progress_bar = st.progress(0, text="Running AI Screening...")
-                
-                for i, (index, row) in enumerate(df.iterrows()):
-                    title = row.get("Title", "")
-                    abstract = row.get("Abstract", "")
-                    prompt = f"""
-                    Evaluate the following Study Title and Abstract against the criteria.
-                    Title: {title}
-                    Abstract: {abstract}
-                    Inclusion Criteria: {incl_criteria if 'incl_criteria' in locals() else ''}
-                    Exclusion Criteria: {excl_criteria if 'excl_criteria' in locals() else ''}
+                with st.spinner("Executing AI Abstract Screening..."):
+                    df = st.session_state.df_screening
+                    total = len(df)
+                    progress_bar = st.progress(0, text="Running AI Screening...")
                     
-                    TASK 1: Decide if the study should be 'Inclusion', 'Exclusion', or 'Unclear'.
-                    TASK 2: You MUST select one or more exact reasons from the 12 categories below that explain your decision:
-                    [IN SCOPE]: "Population in scope", "Intervention in scope", "Comparator in scope", "Outcome in scope", "Study design in scope", "Time in scope"
-                    [OUT OF SCOPE]: "Population out of scope", "Intervention out of scope", "Comparator out of scope", "Outcome out of scope", "Study design out of scope", "Time out of scope"
+                    for i, (index, row) in enumerate(df.iterrows()):
+                        title = row.get("Title", "")
+                        abstract = row.get("Abstract", "")
+                        prompt = f"""
+                        Evaluate the following Study Title and Abstract against the criteria.
+                        Title: {title}
+                        Abstract: {abstract}
+                        Inclusion Criteria: {incl_criteria if 'incl_criteria' in locals() else ''}
+                        Exclusion Criteria: {excl_criteria if 'excl_criteria' in locals() else ''}
+                        
+                        TASK 1: Decide if the study should be 'Inclusion', 'Exclusion', or 'Unclear'.
+                        TASK 2: You MUST select one or more exact reasons from the 12 categories below that explain your decision:
+                        [IN SCOPE]: "Population in scope", "Intervention in scope", "Comparator in scope", "Outcome in scope", "Study design in scope", "Time in scope"
+                        [OUT OF SCOPE]: "Population out of scope", "Intervention out of scope", "Comparator out of scope", "Outcome out of scope", "Study design out of scope", "Time out of scope"
+                        
+                        Return JSON:
+                        {{
+                            "decision": "Inclusion/Exclusion/Unclear",
+                            "categories": ["list", "of", "exact", "categories", "chosen"],
+                            "explanation": "Brief explanation"
+                        }}
+                        """
+                        resp = get_llm_response(prompt)
+                        if resp:
+                            try:
+                                res_json = json.loads(resp)
+                                df.at[index, 'AI Decision'] = res_json.get("decision", "")
+                                df.at[index, 'Rationale'] = f"[{', '.join(res_json.get('categories', []))}] - {res_json.get('explanation', '')}"
+                            except:
+                                df.at[index, 'AI Decision'] = "Error"
+                                
+                        progress_bar.progress((i + 1) / total, text=f"Screening abstract {i+1} of {total}...")
                     
-                    Return JSON:
-                    {{
-                        "decision": "Inclusion/Exclusion/Unclear",
-                        "categories": ["list", "of", "exact", "categories", "chosen"],
-                        "explanation": "Brief explanation"
-                    }}
-                    """
-                    resp = get_llm_response(prompt)
-                    if resp:
-                        try:
-                            res_json = json.loads(resp)
-                            df.at[index, 'AI Decision'] = res_json.get("decision", "")
-                            df.at[index, 'Rationale'] = f"[{', '.join(res_json.get('categories', []))}] - {res_json.get('explanation', '')}"
-                        except:
-                            df.at[index, 'AI Decision'] = "Error"
-                            
-                    progress_bar.progress((i + 1) / total, text=f"Screening abstract {i+1} of {total}...")
-                
-                progress_bar.empty()
-                st.session_state.df_screening = sort_dataframe(df)
+                    progress_bar.empty()
+                    st.session_state.df_screening = sort_dataframe(df)
+                st.success("AI Screening analysis completed successfully!")
                 st.rerun()
 
     # --- TAB 3: Review & Sync ---
@@ -384,8 +393,8 @@ if not st.session_state.df_screening.empty:
                     
         chart_df = pd.DataFrame(list(exc_counts.items()), columns=['Reason', 'Count'])
         chart = alt.Chart(chart_df).mark_bar(color='#c62828').encode(
-            x=alt.X('Count:Q', axis=alt.Axis(tickMinStep=1)),
-            y=alt.Y('Reason:N', sort='-x', title=''),
+            x=alt.X('Count:Q', axis=alt.Axis(tickMinStep=1, title='Count')),
+            y=alt.Y('Reason:N', sort='-x', title='', axis=alt.Axis(labelLimit=500)),
             tooltip=['Reason', 'Count']
         ).properties(height=250)
         
