@@ -106,15 +106,12 @@ with st.sidebar:
                 creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
                 st.session_state.gc = gspread.authorize(creds)
                 
-                # Extract Sheet ID
                 sheet_id = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url).group(1)
                 sh = st.session_state.gc.open_by_key(sheet_id)
                 
-                # Load Title_abstract_screening
                 worksheet_screening = sh.worksheet("Title_abstract_screening")
                 st.session_state.df_screening = pd.DataFrame(worksheet_screening.get_all_records())
                 
-                # Load Inclusion/Exclusion Criteria
                 worksheet_criteria = sh.worksheet("Inclusion/Exclusion Criteria")
                 df_crit = pd.DataFrame(worksheet_criteria.get_all_records())
                 st.session_state.df_criteria = df_crit
@@ -130,16 +127,12 @@ def get_llm_response(prompt, system_prompt="You are a helpful medical research a
     if not api_key:
         st.error("Please provide an API key in the sidebar.")
         return None
-    
     try:
         if api_provider == "OpenAI":
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
                 model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
                 temperature=temperature,
                 response_format={"type": "json_object"}
             )
@@ -148,10 +141,7 @@ def get_llm_response(prompt, system_prompt="You are a helpful medical research a
             client = Groq(api_key=api_key)
             response = client.chat.completions.create(
                 model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
                 temperature=temperature,
                 response_format={"type": "json_object"}
             )
@@ -161,32 +151,29 @@ def get_llm_response(prompt, system_prompt="You are a helpful medical research a
         return None
 
 def calculate_score(text, incl_keywords, excl_keywords):
-    if not isinstance(text, str):
-        return 0
+    if not isinstance(text, str): return 0
     score = 0
     text_lower = text.lower()
     for kw in incl_keywords:
         if fuzz.partial_ratio(kw.lower(), text_lower) > 85:
-            score += 2
+            # Multiply by word count: 2 words = +4 points, 1 word = +2 points
+            score += (len(kw.split()) * 2)
     for kw in excl_keywords:
         if fuzz.partial_ratio(kw.lower(), text_lower) > 85:
-            score -= 2
+            score -= (len(kw.split()) * 2)
     return max(-10, min(10, score))
 
 def highlight_keywords(text, incl_keywords, excl_keywords):
-    if not isinstance(text, str):
-        return ""
+    if not isinstance(text, str): return ""
     highlighted_text = text
     for kw in incl_keywords:
         if kw.strip():
             pattern = re.compile(re.escape(kw), re.IGNORECASE)
             highlighted_text = pattern.sub(rf'<span style="background-color: #d4edda; color: #155724; border-radius: 3px; padding: 0 2px; font-weight: 600;">\g<0></span>', highlighted_text)
-            
     for kw in excl_keywords:
         if kw.strip():
             pattern = re.compile(re.escape(kw), re.IGNORECASE)
             highlighted_text = pattern.sub(rf'<span style="background-color: #f8d7da; color: #721c24; border-radius: 3px; padding: 0 2px; font-weight: 600;">\g<0></span>', highlighted_text)
-            
     return highlighted_text
 
 def sort_dataframe(df):
@@ -202,44 +189,49 @@ def sort_dataframe(df):
         except (ValueError, TypeError):
             score = 0
         
-        if decision == 'unclear': return 0  # Top priority
-        elif -5 <= score <= 5: return 1  # Tricky articles
-        elif score > 5: return 2  # Likely inclusion
-        else: return 3  # Likely exclusion
+        if decision == 'unclear': return 0  
+        elif -5 <= score <= 5: return 1  
+        elif score > 5: return 2  
+        else: return 3  
             
     df['sort_tier'] = df.apply(get_sort_tier, axis=1)
     df = df.sort_values(by=['sort_tier', 'Score'], ascending=[True, False]).drop(columns=['sort_tier'])
     return df
 
 def style_dataframe(row):
-    color = ''
     decision = str(row.get('AI Decision', '')).strip().lower()
+    
+    # 1. Primary Colors based on AI Decision
+    if decision == 'inclusion':
+        return ['background-color: #d4edda; color: #155724; font-weight: bold;'] * len(row)
+    elif decision == 'exclusion':
+        return ['background-color: #f8d7da; color: #721c24; font-weight: bold;'] * len(row)
+    elif decision == 'unclear':
+        return ['background-color: #fff3cd; color: #856404; font-weight: bold;'] * len(row)
+    
+    # 2. Secondary Colors based on Keyword Score (If AI hasn't decided yet)
     try:
         score = float(row.get('Score', 0))
     except (ValueError, TypeError):
         score = 0
-    
-    if decision == 'unclear':
-        color = 'background-color: #fff3cd; color: #856404;' # Yellow
-    elif score > 5:
-        color = 'background-color: #e2f3e5;' # Light Green
-    elif score < -5:
-        color = 'background-color: #fce4e4;' # Light Red
-    elif -5 <= score <= 5:
-        color = 'background-color: #e2e3e5;' # Light Gray
         
-    return [color] * len(row)
+    if score > 5:
+        return ['background-color: #e2f3e5; color: #155724;'] * len(row)
+    elif score < -5:
+        return ['background-color: #fce4e4; color: #721c24;'] * len(row)
+    elif -5 <= score <= 5 and score != 0:
+        return ['background-color: #e2e3e5; color: #383d41;'] * len(row)
+        
+    return [''] * len(row)
 
 # --- Main UI Content ---
 if not st.session_state.df_screening.empty:
     
-    # Sleek Tabbed Interface
     tab_picos, tab_engine, tab_review = st.tabs(["📋 1. Setup & PICOS", "🤖 2. Screening Engine", "🔍 3. Review & Sync"])
     
     # --- TAB 1: PICOS & Keywords ---
     with tab_picos:
         st.subheader("Define Criteria & Extract Keywords")
-        st.markdown("Provide your exact **PICOS** framework below. The AI will generate matching semantic keywords to score abstracts.")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -254,9 +246,14 @@ if not st.session_state.df_screening.empty:
         if st.button("✨ Auto-Generate Keywords"):
             with st.spinner("Analyzing criteria & generating keywords..."):
                 prompt = f"""
-                Based on the following PICOS criteria, extract distinct, concise keywords or short phrases.
+                Based on the following PICOS criteria, extract distinct keywords.
+                CRITICAL RULES: 
+                1. You MUST output ONLY single words or maximum 2-word phrases.
+                2. Do NOT output long phrases or sentences.
+                
                 Inclusion Criteria: {incl_criteria}
                 Exclusion Criteria: {excl_criteria}
+                
                 Provide the output strictly as a JSON object with two lists: 'inclusion_keywords' and 'exclusion_keywords'.
                 """
                 response = get_llm_response(prompt)
@@ -269,7 +266,6 @@ if not st.session_state.df_screening.empty:
                     except json.JSONDecodeError:
                         st.error("Failed to parse JSON from LLM.")
                         
-        st.markdown("---")
         st.markdown("##### 📝 Active Keywords (Editable)")
         col3, col4 = st.columns(2)
         with col3:
@@ -281,6 +277,26 @@ if not st.session_state.df_screening.empty:
                 value=", ".join(st.session_state.exclusion_keywords), height=100)
             st.session_state.exclusion_keywords = [k.strip() for k in excl_kw_text.split(",") if k.strip()]
 
+        st.markdown("---")
+        st.subheader("🗑️ Data Management")
+        st.markdown("Use these buttons to clear specific data from your session.")
+        col_c1, col_c2, col_c3 = st.columns(3)
+        with col_c1:
+            if st.button("Clear Keywords", use_container_width=True):
+                st.session_state.inclusion_keywords = []
+                st.session_state.exclusion_keywords = []
+                st.rerun()
+        with col_c2:
+            if st.button("Clear PICOS Criteria", use_container_width=True):
+                st.session_state.df_criteria = pd.DataFrame()
+                st.rerun()
+        with col_c3:
+            if st.button("Clear Screening Results", use_container_width=True):
+                if 'AI Decision' in st.session_state.df_screening.columns:
+                    st.session_state.df_screening['AI Decision'] = ""
+                    st.session_state.df_screening['Rationale'] = ""
+                    st.session_state.df_screening['Score'] = 0
+                st.rerun()
 
     # --- TAB 2: AI Screening Engine ---
     with tab_engine:
@@ -289,63 +305,98 @@ if not st.session_state.df_screening.empty:
         
         col_btn1, col_btn2 = st.columns([1, 1])
         with col_btn1:
-            st.info("Step 1: Matches dataset against keywords to apply base +/- scores. Organizes trickiest (-5 to +5) to the top.")
+            st.info("Step 1: Matches dataset against keywords to apply base +/- scores. Multi-word keywords grant double points.")
             if st.button("📊 1. Calculate Scores & Sort"):
-                with st.spinner("Scoring abstracts..."):
-                    df = st.session_state.df_screening
-                    df['Score'] = df.apply(lambda row: calculate_score(f"{row.get('Title','')} {row.get('Abstract','')}", 
-                                                                       st.session_state.inclusion_keywords, 
-                                                                       st.session_state.exclusion_keywords), axis=1)
-                    st.session_state.df_screening = sort_dataframe(df)
-                    st.success("Scoring and sorting completed!")
-                    st.rerun()
+                df = st.session_state.df_screening
+                total = len(df)
+                progress_bar = st.progress(0, text="Scoring abstracts...")
+                
+                scores = []
+                for idx, row in df.iterrows():
+                    scores.append(calculate_score(f"{row.get('Title','')} {row.get('Abstract','')}", 
+                                                  st.session_state.inclusion_keywords, 
+                                                  st.session_state.exclusion_keywords))
+                    progress_bar.progress((idx + 1) / total, text=f"Scoring abstract {idx+1} of {total}...")
+                
+                df['Score'] = scores
+                progress_bar.empty()
+                st.session_state.df_screening = sort_dataframe(df)
+                st.success("Scoring and sorting completed!")
+                st.rerun()
 
         with col_btn2:
-            st.info("Step 2: Uses the LLM to read abstracts and provide Inclusion/Exclusion/Unclear logic and PICOS rationale.")
+            st.info("Step 2: Uses the LLM to read abstracts and assign Inclusion/Exclusion/Unclear with PICOST categorical rationale.")
             if st.button("🤖 2. Execute AI Screening"):
-                with st.spinner("Running deep AI Screening logic..."):
-                    df = st.session_state.df_screening
-                    for index, row in df.iterrows():
-                        title = row.get("Title", "")
-                        abstract = row.get("Abstract", "")
-                        prompt = f"""
-                        You are an expert medical researcher performing abstract screening.
-                        Evaluate the following Study Title and Abstract against the criteria.
-                        
-                        Title: {title}
-                        Abstract: {abstract}
-                        Inclusion Criteria: {incl_criteria if 'incl_criteria' in locals() else ''}
-                        Exclusion Criteria: {excl_criteria if 'excl_criteria' in locals() else ''}
-                        
-                        Decide if the study should be 'Inclusion', 'Exclusion', or 'Unclear'.
-                        Provide a detailed Rationale addressing PICOS (Population, Intervention, Comparison, Outcomes, Study Design).
-                        
-                        Return strictly as JSON:
-                        {{
-                            "decision": "Inclusion/Exclusion/Unclear",
-                            "rationale": "Detailed rationale text here"
-                        }}
-                        """
-                        resp = get_llm_response(prompt)
-                        if resp:
-                            try:
-                                res_json = json.loads(resp)
-                                df.at[index, 'AI Decision'] = res_json.get("decision", "")
-                                df.at[index, 'Rationale'] = res_json.get("rationale", "")
-                            except:
-                                df.at[index, 'AI Decision'] = "Error"
+                df = st.session_state.df_screening
+                total = len(df)
+                progress_bar = st.progress(0, text="Running AI Screening...")
+                
+                for i, (index, row) in enumerate(df.iterrows()):
+                    title = row.get("Title", "")
+                    abstract = row.get("Abstract", "")
+                    prompt = f"""
+                    You are an expert medical researcher performing abstract screening.
+                    Evaluate the following Study Title and Abstract against the criteria.
                     
-                    st.session_state.df_screening = sort_dataframe(df)
-                    st.success("AI Screening completed!")
-                    st.rerun()
-
+                    Title: {title}
+                    Abstract: {abstract}
+                    Inclusion Criteria: {incl_criteria if 'incl_criteria' in locals() else ''}
+                    Exclusion Criteria: {excl_criteria if 'excl_criteria' in locals() else ''}
+                    
+                    TASK 1: Decide if the study should be 'Inclusion', 'Exclusion', or 'Unclear'.
+                    TASK 2: You MUST select one or more exact reasons from the 12 categories below that explain your decision:
+                    [IN SCOPE]: "Population in scope", "Intervention in scope", "Comparator in scope", "Outcome in scope", "Study design in scope", "Time in scope"
+                    [OUT OF SCOPE]: "Population out of scope", "Intervention out of scope", "Comparator out of scope", "Outcome out of scope", "Study design out of scope", "Time out of scope"
+                    
+                    Return strictly as JSON:
+                    {{
+                        "decision": "Inclusion/Exclusion/Unclear",
+                        "categories": ["list", "of", "exact", "categories", "chosen", "from", "the", "12", "above"],
+                        "explanation": "Brief explanation text here"
+                    }}
+                    """
+                    resp = get_llm_response(prompt)
+                    if resp:
+                        try:
+                            res_json = json.loads(resp)
+                            df.at[index, 'AI Decision'] = res_json.get("decision", "")
+                            cats = ", ".join(res_json.get("categories", []))
+                            explanation = res_json.get("explanation", "")
+                            df.at[index, 'Rationale'] = f"[{cats}] - {explanation}"
+                        except:
+                            df.at[index, 'AI Decision'] = "Error"
+                            
+                    progress_bar.progress((i + 1) / total, text=f"Screening abstract {i+1} of {total}...")
+                
+                progress_bar.empty()
+                st.session_state.df_screening = sort_dataframe(df)
+                st.success("AI Screening completed!")
+                st.rerun()
 
     # --- TAB 3: Review & Sync ---
     with tab_review:
-        st.subheader("Interactive Review & Manual Edits")
-        st.markdown("Use this interface to view individual abstracts, modify the AI's decisions, and push data back to your Google Sheet.")
         
-        # Expandable Abstract Viewer
+        st.subheader("📈 Inclusion & Exclusion Analytics")
+        # Generate Bar Chart from the 12 Categories
+        reason_categories = [
+            "Population in scope", "Intervention in scope", "Comparator in scope", "Outcome in scope", "Study design in scope", "Time in scope",
+            "Population out of scope", "Intervention out of scope", "Comparator out of scope", "Outcome out of scope", "Study design out of scope", "Time out of scope"
+        ]
+        reason_counts = {cat: 0 for cat in reason_categories}
+        
+        # Only count Inclusion and Exclusion (ignore Unclear)
+        df_decided = st.session_state.df_screening[st.session_state.df_screening['AI Decision'].str.lower().isin(['inclusion', 'exclusion'])]
+        for rationale in df_decided['Rationale'].dropna():
+            for cat in reason_categories:
+                if cat.lower() in str(rationale).lower():
+                    reason_counts[cat] += 1
+                    
+        chart_df = pd.DataFrame(list(reason_counts.items()), columns=['Reason Category', 'Count']).set_index('Reason Category')
+        st.bar_chart(chart_df, height=350)
+        
+        st.markdown("---")
+        st.subheader("Interactive Review & Manual Edits")
+        
         with st.expander("🔍 Open Abstract Highlighting Viewer", expanded=False):
             study_ids = st.session_state.df_screening["Study ID"].dropna().astype(str).tolist() if "Study ID" in st.session_state.df_screening.columns else []
             selected_id = st.selectbox("Select Study ID to view Abstract", [""] + study_ids)
@@ -361,7 +412,6 @@ if not st.session_state.df_screening.empty:
 
         st.markdown("---")
         
-        # Data Editor
         edited_df = st.data_editor(
             st.session_state.df_screening.style.apply(style_dataframe, axis=1),
             use_container_width=True,
@@ -371,7 +421,6 @@ if not st.session_state.df_screening.empty:
         )
         st.session_state.df_screening = pd.DataFrame(edited_df)
 
-        # Sync Button
         if st.button("💾 Sync Updates to Google Sheet", type="primary"):
             if st.session_state.gc:
                 with st.spinner("Pushing data to Google Cloud..."):
@@ -400,5 +449,4 @@ if not st.session_state.df_screening.empty:
                 st.warning("Not connected to Google Sheets.")
 
 else:
-    # Empty State Display
     st.info("👈 Please enter your credentials and Google Sheet URL in the sidebar, then click **Connect & Load Data** to begin.")
