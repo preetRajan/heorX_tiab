@@ -8,9 +8,12 @@ from thefuzz import fuzz
 from openai import OpenAI
 from groq import Groq
 import time
+
 # --- Setup & Config ---
 st.set_page_config(page_title="heorX - AI Title & Abstract Screening", layout="wide")
+
 st.title("heorX - AI Title and Abstract Screening")
+
 # --- Initialize Session State ---
 if "df_screening" not in st.session_state:
     st.session_state.df_screening = pd.DataFrame()
@@ -24,6 +27,7 @@ if "gc" not in st.session_state:
     st.session_state.gc = None
 if "selected_abstract_id" not in st.session_state:
     st.session_state.selected_abstract_id = None
+
 # --- Sidebar: Settings ---
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -73,6 +77,7 @@ with st.sidebar:
                 st.error(f"Error loading data: {e}")
         else:
             st.warning("Please upload credentials.json first.")
+
 # --- Helper Functions ---
 def get_llm_response(prompt, system_prompt="You are a helpful medical research assistant."):
     if not api_key:
@@ -107,6 +112,7 @@ def get_llm_response(prompt, system_prompt="You are a helpful medical research a
     except Exception as e:
         st.error(f"API Error: {e}")
         return None
+
 def calculate_score(text, incl_keywords, excl_keywords):
     if not isinstance(text, str):
         return 0
@@ -119,6 +125,7 @@ def calculate_score(text, incl_keywords, excl_keywords):
         if fuzz.partial_ratio(kw.lower(), text_lower) > 85:
             score -= 2
     return max(-10, min(10, score))
+
 def highlight_keywords(text, incl_keywords, excl_keywords):
     if not isinstance(text, str):
         return ""
@@ -127,14 +134,15 @@ def highlight_keywords(text, incl_keywords, excl_keywords):
     for kw in incl_keywords:
         if kw.strip():
             pattern = re.compile(re.escape(kw), re.IGNORECASE)
-            highlighted_text = pattern.sub(f'<span style="background-color: #d4edda; color: #155724; font-weight: bold;">\g<0></span>', highlighted_text)
+            highlighted_text = pattern.sub(f'<span style="background-color: #d4edda; color: #155724; font-weight: bold;">\\g<0></span>', highlighted_text)
             
     for kw in excl_keywords:
         if kw.strip():
             pattern = re.compile(re.escape(kw), re.IGNORECASE)
-            highlighted_text = pattern.sub(f'<span style="background-color: #f8d7da; color: #721c24; font-weight: bold;">\g<0></span>', highlighted_text)
+            highlighted_text = pattern.sub(f'<span style="background-color: #f8d7da; color: #721c24; font-weight: bold;">\\g<0></span>', highlighted_text)
             
     return highlighted_text
+
 def sort_dataframe(df):
     if df.empty: return df
     
@@ -146,7 +154,10 @@ def sort_dataframe(df):
         
     def get_sort_tier(row):
         decision = str(row.get('AI Decision', '')).strip().lower()
-        score = row.get('Score', 0)
+        try:
+            score = float(row.get('Score', 0))
+        except (ValueError, TypeError):
+            score = 0
         
         if decision == 'unclear':
             return 0  # Top priority
@@ -161,10 +172,14 @@ def sort_dataframe(df):
     # Sort by tier, then descending score
     df = df.sort_values(by=['sort_tier', 'Score'], ascending=[True, False]).drop(columns=['sort_tier'])
     return df
+
 def style_dataframe(row):
     color = ''
     decision = str(row.get('AI Decision', '')).strip().lower()
-    score = row.get('Score', 0)
+    try:
+        score = float(row.get('Score', 0))
+    except (ValueError, TypeError):
+        score = 0
     
     if decision == 'unclear':
         color = 'background-color: #fff3cd; color: #856404;' # Yellow
@@ -176,6 +191,7 @@ def style_dataframe(row):
         color = 'background-color: #e2e3e5;' # Light Gray
         
     return [color] * len(row)
+
 # --- Main UI ---
 if not st.session_state.df_screening.empty:
     
@@ -221,6 +237,7 @@ if not st.session_state.df_screening.empty:
             excl_kw_text = st.text_area("Exclusion Keywords (comma separated)", 
                 value=", ".join(st.session_state.exclusion_keywords), height=100)
             st.session_state.exclusion_keywords = [k.strip() for k in excl_kw_text.split(",") if k.strip()]
+
     st.divider()
     st.header("📊 2. Screening Data")
     
@@ -235,6 +252,7 @@ if not st.session_state.df_screening.empty:
                 st.session_state.df_screening = sort_dataframe(df)
                 st.success("Scoring and sorting completed!")
                 st.rerun()
+
     with col_btn2:
         if st.button("2. Start AI Screening"):
             with st.spinner("Running AI Screening..."):
@@ -275,6 +293,7 @@ if not st.session_state.df_screening.empty:
                 st.session_state.df_screening = sort_dataframe(df)
                 st.success("AI Screening completed!")
                 st.rerun()
+
     # Display Editable DataFrame
     st.markdown("### Interactive Dataset")
     st.markdown("Edit the data directly below. 'Unclear' rows and scored rows are color-coded.")
@@ -289,6 +308,7 @@ if not st.session_state.df_screening.empty:
         key="data_editor"
     )
     st.session_state.df_screening = pd.DataFrame(edited_df)
+
     # Save to Google Sheets
     if st.button("💾 Update Google Sheet"):
         if st.session_state.gc:
@@ -318,6 +338,7 @@ if not st.session_state.df_screening.empty:
                     st.error(f"Failed to update sheet: {e}")
         else:
             st.warning("Not connected to Google Sheets.")
+
     st.divider()
     st.header("🔍 3. Abstract Viewer")
     study_ids = st.session_state.df_screening["Study ID"].dropna().astype(str).tolist() if "Study ID" in st.session_state.df_screening.columns else []
