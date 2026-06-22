@@ -68,39 +68,38 @@ with st.sidebar:
         
     temperature = st.slider("Temperature", 0.0, 1.0, 0.0)
     
-    st.divider()
-    
     st.header("Database Connection")
-    credentials_file = st.file_uploader("Upload credentials.json", type=["json"])
     sheet_url_default = "https://docs.google.com/spreadsheets/d/1VCEapxI1H30xWIJwheUr7sH7fOk7oLdPQmqQWueynG0/edit"
     sheet_url = st.text_input("Google Sheet URL", value=sheet_url_default)
     
     if st.button("Connect & Load Data", use_container_width=True):
-        if credentials_file is not None:
-            try:
-                creds_dict = json.load(credentials_file)
-                scopes = [
-                    "https://www.googleapis.com/auth/spreadsheets",
-                    "https://www.googleapis.com/auth/drive"
-                ]
-                creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-                st.session_state.gc = gspread.authorize(creds)
-                
-                sheet_id = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url).group(1)
-                sh = st.session_state.gc.open_by_key(sheet_id)
-                
-                worksheet_screening = sh.worksheet("Title_abstract_screening")
-                st.session_state.df_screening = pd.DataFrame(worksheet_screening.get_all_records())
-                
-                worksheet_criteria = sh.worksheet("Inclusion/Exclusion Criteria")
-                df_crit = pd.DataFrame(worksheet_criteria.get_all_records())
-                st.session_state.df_criteria = df_crit
-                
-                st.success("Database linked successfully.")
-            except Exception as e:
-                st.error(f"Connection Error: {e}")
-        else:
-            st.warning("Credentials file required.")
+        try:
+            # Load from Streamlit Cloud Secrets (no file upload required!)
+            creds_dict = st.secrets["gcp_service_account"]
+            
+            scopes = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ]
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+            st.session_state.gc = gspread.authorize(creds)
+            
+            # Extract Sheet ID
+            sheet_id = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url).group(1)
+            sh = st.session_state.gc.open_by_key(sheet_id)
+            
+            # Load Title_abstract_screening
+            worksheet_screening = sh.worksheet("Title_abstract_screening")
+            st.session_state.df_screening = pd.DataFrame(worksheet_screening.get_all_records())
+            
+            # Load Inclusion/Exclusion Criteria
+            worksheet_criteria = sh.worksheet("Inclusion/Exclusion Criteria")
+            df_crit = pd.DataFrame(worksheet_criteria.get_all_records())
+            st.session_state.df_criteria = df_crit
+            
+            st.success("Database linked successfully.")
+        except Exception as e:
+            st.error(f"Connection Error: {e}")
 
 # --- Helper Functions ---
 def get_llm_response(prompt, system_prompt="You are a precise data extraction and medical analysis tool."):
@@ -407,7 +406,9 @@ if not st.session_state.df_screening.empty:
                         
                         ws_screening = sh.worksheet("Title_abstract_screening")
                         ws_screening.clear()
-                        ws_screening.update([st.session_state.df_screening.columns.values.tolist()] + st.session_state.df_screening.values.tolist())
+                        # Force all data to string to prevent APIError [400] for nested JSON objects
+                        df_safe = st.session_state.df_screening.astype(str)
+                        ws_screening.update([df_safe.columns.values.tolist()] + df_safe.values.tolist())
                         
                         ws_criteria = sh.worksheet("Inclusion/Exclusion Criteria")
                         crit_df = pd.DataFrame([{
@@ -417,7 +418,8 @@ if not st.session_state.df_screening.empty:
                             "Exclusion keywords": ", ".join(st.session_state.exclusion_keywords)
                         }])
                         ws_criteria.clear()
-                        ws_criteria.update([crit_df.columns.values.tolist()] + crit_df.values.tolist())
+                        crit_safe = crit_df.astype(str)
+                        ws_criteria.update([crit_safe.columns.values.tolist()] + crit_safe.values.tolist())
                         st.success("Google Sheet synced.")
                     except Exception as e:
                         st.error(f"Failed to update sheet: {e}")
